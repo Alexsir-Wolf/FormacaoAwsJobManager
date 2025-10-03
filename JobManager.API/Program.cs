@@ -28,10 +28,11 @@ internal class Program
             config.PollingInterval = TimeSpan.FromMinutes(30);
         });
 
+
         // Add services to the container.
         var connectionString = builder.Configuration.GetConnectionString("AppDb");
 
-        var AppConfigurations = builder.Configuration.GetSection("AppConfigurations:AppDb1");
+        var bucketName = builder.Configuration.GetSection("Buckets:alex-fs-dev-dotnet");
 
         builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(connectionString));
 
@@ -107,7 +108,22 @@ internal class Program
             {
                 return Results.BadRequest();
             }
+
             var key = $"job-applications/{id}-{file.FileName}";
+
+            var client = new Amazon.S3.AmazonS3Client(RegionEndpoint.USEast2);
+            using var stream = file.OpenReadStream();
+
+            var putRequest = new Amazon.S3.Model.PutObjectRequest
+            {
+                BucketName = bucketName.Value,
+                Key = key,
+                InputStream = stream,
+                ContentType = file.ContentType,
+                CannedACL = Amazon.S3.S3CannedACL.PublicRead
+            };
+
+            var response = await client.PutObjectAsync(putRequest);
 
             var application = await db.JobApplications.SingleOrDefaultAsync(ja => ja.Id == id);
 
