@@ -1,144 +1,69 @@
 using Amazon;
 using Amazon.Extensions.NETCore.Setup;
-using JobManager.API.Entities;
+using Carter;
 using JobManager.API.Persistence;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 
-internal class Program 
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Configuration.AddSystemsManager(source =>
 {
-    private static void Main(string[] args)
+    source.AwsOptions = new AWSOptions
     {
-        var builder = WebApplication.CreateBuilder(args);
+        Region = RegionEndpoint.USEast2
+    };
 
-        builder.Configuration.AddSystemsManager(source => 
-        {
-            source.AwsOptions = new AWSOptions
-            {
-                Region = RegionEndpoint.USEast2
-            };
+    source.Path = "/";
+    source.ReloadAfter = TimeSpan.FromSeconds(30);
+});
 
-            source.Path = "/";
-            source.ReloadAfter = TimeSpan.FromSeconds(30);
-        });
+builder.Configuration.AddSecretsManager(null, RegionEndpoint.USEast2, config =>
+{
+    config.KeyGenerator = (secret, name) => name.Replace("/", ":");
+    config.PollingInterval = TimeSpan.FromMinutes(30);
+});
 
-        builder.Configuration.AddSecretsManager(null, RegionEndpoint.USEast2, config => 
-        {
-            config.KeyGenerator = (secret, name) => name.Replace("/", ":");
-            config.PollingInterval = TimeSpan.FromMinutes(30);
-        });
+// Add services to the container.
+var connectionString = builder.Configuration.GetConnectionString("AppDb");
 
+builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(connectionString));
 
-        // Add services to the container.
-        var connectionString = builder.Configuration.GetConnectionString("AppDb");
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "JobManager.API", Version = "v1" });
+});
 
-        var bucketName = builder.Configuration.GetSection("Buckets:alex-fs-dev-dotnet");
+builder.Services.AddCarter();
 
-        builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(connectionString));
+// CORS
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
 
-        // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-        builder.Services.AddOpenApi();
+var app = builder.Build();
 
-        var app = builder.Build();
-
-        // Configure the HTTP request pipeline.
-        if (app.Environment.IsDevelopment())
-        {
-            app.MapOpenApi();
-        }
-
-        app.UseHttpsRedirection();
-
-        app.MapPost("/api/jobs", async (Job job, AppDbContext db) =>
-        {
-            await db.Jobs.AddAsync(job);
-            await db.SaveChangesAsync();
-
-            return Results.Created($"/api/jobs/{job.Id}", job);
-        });
-
-        app.MapGet("/api/jobs/{id}", async (int id, AppDbContext db) =>
-        {
-            var job = await db.Jobs.SingleOrDefaultAsync(j => j.Id == id);
-
-            if (job is null)
-            {
-                return Results.NotFound();
-            }
-
-            return Results.Ok(job);
-        });
-
-        app.MapGet("/api/jobs", async (AppDbContext db) =>
-        {
-            var jobs = await db.Jobs.ToListAsync();
-
-            return Results.Ok(jobs);
-        });
-
-        app.MapPost("/api/jobs/{id}/job-applications", async (int id, JobApplication application, [FromServices] AppDbContext db) =>
-        {
-            var exists = await db.Jobs.AnyAsync(j => j.Id == id);
-
-            if (!exists)
-            {
-                return Results.NotFound();
-            }
-
-            application.JobId = id;
-
-            await db.JobApplications.AddAsync(application);
-            await db.SaveChangesAsync();
-
-            return Results.NoContent();
-        });
-
-        app.MapPut("/api/job-applications/{id}/upload-cv", async (int id, IFormFile file, [FromServices] AppDbContext db) =>
-        {
-            if (file == null || file.Length == 0)
-            {
-                return Results.BadRequest();
-            }
-
-            var extension = Path.GetExtension(file.FileName);
-
-            var validExtensions = new List<string> { ".pdf", ".docx" };
-
-            if (!validExtensions.Contains(extension))
-            {
-                return Results.BadRequest();
-            }
-
-            var key = $"job-applications/{id}-{file.FileName}";
-
-            var client = new Amazon.S3.AmazonS3Client(RegionEndpoint.USEast2);
-            using var stream = file.OpenReadStream();
-
-            var putRequest = new Amazon.S3.Model.PutObjectRequest
-            {
-                BucketName = bucketName.Value,
-                Key = key,
-                InputStream = stream,
-                ContentType = file.ContentType,
-                CannedACL = Amazon.S3.S3CannedACL.PublicRead
-            };
-
-            var response = await client.PutObjectAsync(putRequest);
-
-            var application = await db.JobApplications.SingleOrDefaultAsync(ja => ja.Id == id);
-
-            if (application is null)
-            {
-                return Results.NotFound();
-            }
-
-            application.CVUrl = key;
-
-            await db.SaveChangesAsync();
-
-            return Results.NoContent();
-        });
-
-        app.Run();
-    }
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "JobManager.API v1");
+    });
 }
+
+app.UseHttpsRedirection();
+
+app.MapCarter();
+
+app.UseCors();
+
+app.Run();
