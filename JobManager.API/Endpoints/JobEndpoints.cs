@@ -1,9 +1,10 @@
-using Carter;
 using Amazon.S3.Model;
+using Carter;
 using JobManager.API.Entities;
 using JobManager.API.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using System.Net;
 
 namespace JobManager.API.Endpoints;
@@ -78,7 +79,8 @@ public class JobEndpoints : CarterModule
     private async Task<IResult> CreateJobApplication(
         int id, 
         JobApplication application, 
-        [FromServices] AppDbContext db)
+        [FromServices] AppDbContext db,
+        [FromServices] IConfiguration configuration)
     {
         var exists = await db.Jobs.AnyAsync(j => j.Id == id);
 
@@ -91,6 +93,23 @@ public class JobEndpoints : CarterModule
 
         await db.JobApplications.AddAsync(application);
         await db.SaveChangesAsync();
+
+        var client = new Amazon.S3.AmazonS3Client(Amazon.RegionEndpoint.USEast2);
+        var sqs = new Amazon.SQS.AmazonSQSClient(Amazon.RegionEndpoint.USEast2);
+
+        var message = $"New job application for job {id} from {application.CandidateName} | {application.CandidateEmail}";
+        var queue = await sqs.GetQueueUrlAsync("formacao-aws-alex-fs-dev");
+
+        if (string.IsNullOrEmpty(queue.QueueUrl))
+            return Results.NotFound("Queue not Found;");
+
+        var request = new Amazon.SQS.Model.SendMessageRequest
+        {
+            QueueUrl = queue.QueueUrl,
+            MessageBody = message
+        };
+
+        var result = await sqs.SendMessageAsync(request);
 
         return Results.NoContent();
     }
@@ -116,7 +135,9 @@ public class JobEndpoints : CarterModule
         var client = new Amazon.S3.AmazonS3Client(Amazon.RegionEndpoint.USEast2);
         using var stream = file.OpenReadStream();
 
-        var bucketName = configuration.GetSection("Buckets:alex-fs-dev-dotnet").Value;
+        var bucketName = configuration.GetValue<string>("Buckets:alex-fs-dev-dotnet") ?? string.Empty;
+        if (string.IsNullOrEmpty(bucketName))
+            return Results.NotFound("Bucket not Found;");
 
         var putRequest = new PutObjectRequest
         {
@@ -130,8 +151,7 @@ public class JobEndpoints : CarterModule
         var application = await db.JobApplications.SingleOrDefaultAsync(ja => ja.Id == id);
 
         if (application is null)        
-            return Results.NotFound();
-        
+            return Results.NotFound();        
 
         application.CVUrl = key;
 
@@ -146,7 +166,9 @@ public class JobEndpoints : CarterModule
         [FromServices] AppDbContext db,
         [FromServices] IConfiguration configuration)
     {
-        var bucketName = configuration.GetSection("Buckets:alex-fs-dev-dotnet").Value;
+        var bucketName = configuration.GetValue<string>("Buckets:alex-fs-dev-dotnet") ?? string.Empty;
+        if (string.IsNullOrEmpty(bucketName))
+            return Results.NotFound("Bucket not Found;");
 
         var application = await db.JobApplications
             .SingleOrDefaultAsync(ja => ja.JobId == jobId && ja.CandidateEmail == email);

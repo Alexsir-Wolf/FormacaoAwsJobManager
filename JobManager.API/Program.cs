@@ -2,6 +2,7 @@ using Amazon;
 using Amazon.Extensions.NETCore.Setup;
 using Carter;
 using JobManager.API.Persistence;
+using JobManager.API.Workers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 
@@ -18,16 +19,19 @@ builder.Configuration.AddSystemsManager(source =>
     source.ReloadAfter = TimeSpan.FromSeconds(30);
 });
 
-builder.Configuration.AddSecretsManager(null, RegionEndpoint.USEast2, config =>
-{
-    config.KeyGenerator = (secret, name) => name.Replace("/", ":");
-    config.PollingInterval = TimeSpan.FromMinutes(30);
-});
+//Secret Manager
+//builder.Configuration.AddSecretsManager(null, RegionEndpoint.USEast2, config =>
+//{
+//    config.KeyGenerator = (secret, name) => name.Replace("/", ":");
+//    config.PollingInterval = TimeSpan.FromMinutes(30);
+//});
 
 // Add services to the container.
 var connectionString = builder.Configuration.GetConnectionString("AppDb");
 
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(connectionString));
+
+builder.Services.AddHostedService<JobApplicationNotificationWorker>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
