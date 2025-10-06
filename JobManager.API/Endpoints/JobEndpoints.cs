@@ -1,4 +1,6 @@
+using Amazon.S3;
 using Amazon.S3.Model;
+using Amazon.SQS;
 using Carter;
 using JobManager.API.Entities;
 using JobManager.API.Persistence;
@@ -80,7 +82,7 @@ public class JobEndpoints : CarterModule
         int id, 
         JobApplication application, 
         [FromServices] AppDbContext db,
-        [FromServices] IConfiguration configuration)
+        [FromServices] IAmazonSQS sqs)
     {
         var exists = await db.Jobs.AnyAsync(j => j.Id == id);
 
@@ -94,9 +96,6 @@ public class JobEndpoints : CarterModule
         await db.JobApplications.AddAsync(application);
         await db.SaveChangesAsync();
 
-        var client = new Amazon.S3.AmazonS3Client(Amazon.RegionEndpoint.USEast2);
-        var sqs = new Amazon.SQS.AmazonSQSClient(Amazon.RegionEndpoint.USEast2);
-
         var message = $"New job application for job {id} from {application.CandidateName} | {application.CandidateEmail}";
         var queue = await sqs.GetQueueUrlAsync("formacao-aws-alex-fs-dev");
 
@@ -109,7 +108,7 @@ public class JobEndpoints : CarterModule
             MessageBody = message
         };
 
-        var result = await sqs.SendMessageAsync(request);
+        await sqs.SendMessageAsync(request);
 
         return Results.NoContent();
     }
@@ -118,6 +117,7 @@ public class JobEndpoints : CarterModule
         int id, 
         IFormFile file, 
         [FromServices] AppDbContext db, 
+        [FromServices] IAmazonS3 client,
         [FromServices] IConfiguration configuration)
     {
         if (file == null || file.Length == 0)        
@@ -132,7 +132,6 @@ public class JobEndpoints : CarterModule
 
         var key = $"job-applications/{id}-{file.FileName}";
 
-        var client = new Amazon.S3.AmazonS3Client(Amazon.RegionEndpoint.USEast2);
         using var stream = file.OpenReadStream();
 
         var bucketName = configuration.GetValue<string>("Buckets:alex-fs-dev-dotnet") ?? string.Empty;
@@ -146,7 +145,7 @@ public class JobEndpoints : CarterModule
             InputStream = stream
         };
 
-        var response = await client.PutObjectAsync(putRequest);
+        await client.PutObjectAsync(putRequest);
 
         var application = await db.JobApplications.SingleOrDefaultAsync(ja => ja.Id == id);
 
@@ -164,6 +163,7 @@ public class JobEndpoints : CarterModule
         int jobId, 
         string email,
         [FromServices] AppDbContext db,
+        [FromServices] IAmazonS3 client,
         [FromServices] IConfiguration configuration)
     {
         var bucketName = configuration.GetValue<string>("Buckets:alex-fs-dev-dotnet") ?? string.Empty;
@@ -182,7 +182,6 @@ public class JobEndpoints : CarterModule
             Key = application.CVUrl
         };
 
-        var client = new Amazon.S3.AmazonS3Client(Amazon.RegionEndpoint.USEast2);
         var response = await client.GetObjectAsync(getRequest);
 
         if (response.HttpStatusCode != HttpStatusCode.OK)        

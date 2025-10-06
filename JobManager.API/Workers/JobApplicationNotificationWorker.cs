@@ -8,18 +8,16 @@ namespace JobManager.API.Workers;
 
 public class JobApplicationNotificationWorker : BackgroundService
 {
-    readonly IConfiguration _configuration;
+    private readonly IAmazonSQS _sqs;
 
-    public JobApplicationNotificationWorker(IConfiguration configuration)
+    public JobApplicationNotificationWorker(IAmazonSQS sqs)
     {
-        _configuration = configuration;
+        _sqs = sqs;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var client = new AmazonSQSClient(RegionEndpoint.USEast2);
-
-        var queue = await client.GetQueueUrlAsync("formacao-aws-alex-fs-dev");
+        var queue = await _sqs.GetQueueUrlAsync("formacao-aws-alex-fs-dev");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -31,7 +29,7 @@ public class JobApplicationNotificationWorker : BackgroundService
                 WaitTimeSeconds = 20
             };
 
-            var response = await client.ReceiveMessageAsync(request, stoppingToken);
+            var response = await _sqs.ReceiveMessageAsync(request, stoppingToken);
             
             if (response.HttpStatusCode == HttpStatusCode.OK)
             {
@@ -39,7 +37,7 @@ public class JobApplicationNotificationWorker : BackgroundService
                 {
                     Console.WriteLine($"Received message: {message.Body}");
 
-                    await client.DeleteMessageAsync(queue.QueueUrl, message.ReceiptHandle);
+                    await _sqs.DeleteMessageAsync(queue.QueueUrl, message.ReceiptHandle);
                 }
             }
         }

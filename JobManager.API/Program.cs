@@ -1,9 +1,8 @@
 using Amazon;
 using Amazon.Extensions.NETCore.Setup;
 using Carter;
-using JobManager.API.Persistence;
+using JobManager.API;
 using JobManager.API.Workers;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -27,9 +26,7 @@ builder.Configuration.AddSystemsManager(source =>
 //});
 
 // Add services to the container.
-var connectionString = builder.Configuration.GetConnectionString("AppDb");
-
-builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(connectionString));
+builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddHostedService<JobApplicationNotificationWorker>();
 
